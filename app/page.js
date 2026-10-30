@@ -2,7 +2,14 @@
 
 import { useState, useEffect, useRef } from 'react';
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:9015/api';
+const getApiBase = () => {
+  if (process.env.NEXT_PUBLIC_API_URL) return process.env.NEXT_PUBLIC_API_URL;
+  if (typeof window !== 'undefined') {
+    return `${window.location.protocol}//${window.location.hostname}:9015/api`;
+  }
+  return 'http://localhost:9015/api';
+};
+const API_BASE = getApiBase();
 
 export default function Home() {
   const [activeTab, setActiveTab] = useState('dashboard');
