@@ -65,6 +65,19 @@ export default function Home() {
   });
   const [showNewEventModal, setShowNewEventModal] = useState(false);
 
+  // Telegram Alerts State
+  const [telegramStatus, setTelegramStatus] = useState(null);
+  const [telegramAlerts, setTelegramAlerts] = useState([]);
+  const [telegramManualChatId, setTelegramManualChatId] = useState('');
+  const [telegramForm, setTelegramForm] = useState({
+    bot_token: '8968844963:AAFGhL-fMfnk4JjADMlCIwFgu5TQM4jUzh8',
+    phone: '+595982304930',
+    alert_fallback: true,
+    alert_error: false,
+    is_active: true
+  });
+  const [telegramLoading, setTelegramLoading] = useState(false);
+
   const logsEndRef = useRef(null);
 
   const showAlert = (message, type = 'info') => {
@@ -144,11 +157,160 @@ export default function Home() {
     }
   };
 
+  // Fetch Telegram Status
+  const fetchTelegramStatus = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/telegram/status`);
+      if (res.ok) {
+        const data = await res.json();
+        setTelegramStatus(data);
+        if (data.config) {
+          setTelegramForm({
+            bot_token: data.config.bot_token || '',
+            phone: data.config.phone || '+595982304930',
+            alert_fallback: data.config.alert_fallback ?? true,
+            alert_error: data.config.alert_error ?? false,
+            is_active: data.config.is_active ?? true
+          });
+        }
+      }
+    } catch (err) {
+      console.warn('Backend telegram status error:', err.message);
+    }
+  };
+
+  // Fetch Telegram Alert History
+  const fetchTelegramAlerts = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/telegram/alerts?limit=30`);
+      if (res.ok) {
+        const data = await res.json();
+        setTelegramAlerts(data.alerts || []);
+      }
+    } catch (err) {
+      console.warn('Backend telegram alerts error:', err.message);
+    }
+  };
+
+  // Detect Chats from Telegram (User clicked /start or sent message)
+  const handleDetectTelegramChats = async () => {
+    setTelegramLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/telegram/detect-chat`, { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        showAlert(data.message, data.newChatsCount > 0 ? 'success' : 'info');
+        await fetchTelegramStatus();
+        await fetchTelegramAlerts();
+      } else {
+        showAlert(`Error al detectar chat: ${data.error}`, 'danger');
+      }
+    } catch (err) {
+      showAlert(`Error de conexión: ${err.message}`, 'danger');
+    } finally {
+      setTelegramLoading(false);
+    }
+  };
+
+  // Send Test Alert
+  const handleSendTelegramTest = async (chatId = null) => {
+    setTelegramLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/telegram/test`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chatId })
+      });
+      const data = await res.json();
+      if (data.success) {
+        showAlert(data.message || 'Alerta de prueba enviada a Telegram exitosamente.', 'success');
+        await fetchTelegramAlerts();
+      } else {
+        showAlert(`Error: ${data.error || 'No se pudo enviar la alerta de prueba'}`, 'danger');
+      }
+    } catch (err) {
+      showAlert(`Error: ${err.message}`, 'danger');
+    } finally {
+      setTelegramLoading(false);
+    }
+  };
+
+  // Add Chat ID Manually
+  const handleAddManualChat = async () => {
+    if (!telegramManualChatId.trim()) {
+      showAlert('Por favor ingrese un Chat ID válido', 'warning');
+      return;
+    }
+    setTelegramLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/telegram/add-chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chatId: telegramManualChatId.trim() })
+      });
+      const data = await res.json();
+      if (data.success) {
+        showAlert(`Chat ID ${telegramManualChatId} registrado correctamente.`, 'success');
+        setTelegramManualChatId('');
+        await fetchTelegramStatus();
+      } else {
+        showAlert(`Error: ${data.error}`, 'danger');
+      }
+    } catch (err) {
+      showAlert(`Error: ${err.message}`, 'danger');
+    } finally {
+      setTelegramLoading(false);
+    }
+  };
+
+  // Remove Chat ID
+  const handleRemoveChat = async (chatId) => {
+    if (!confirm(`¿Desea remover el Chat ID ${chatId} de las alertas?`)) return;
+    try {
+      const res = await fetch(`${API_BASE}/telegram/remove-chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chatId })
+      });
+      const data = await res.json();
+      if (data.success) {
+        showAlert(data.message, 'info');
+        await fetchTelegramStatus();
+      }
+    } catch (err) {
+      showAlert(`Error: ${err.message}`, 'danger');
+    }
+  };
+
+  // Save Telegram Config
+  const handleSaveTelegramConfig = async (e) => {
+    if (e) e.preventDefault();
+    setTelegramLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/telegram/config`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(telegramForm)
+      });
+      const data = await res.json();
+      if (data.success) {
+        showAlert('Configuración de alertas Telegram guardada exitosamente.', 'success');
+        await fetchTelegramStatus();
+      } else {
+        showAlert(`Error: ${data.error}`, 'danger');
+      }
+    } catch (err) {
+      showAlert(`Error al guardar: ${err.message}`, 'danger');
+    } finally {
+      setTelegramLoading(false);
+    }
+  };
+
   // Initial load & Polling loop
   useEffect(() => {
     const init = async () => {
       setLoading(true);
-      await Promise.all([fetchStatus(), fetchDbTables(), fetchEvents(), fetchExecutions(), fetchLogs()]);
+      await Promise.all([fetchStatus(), fetchDbTables(), fetchEvents(), fetchExecutions(), fetchLogs(), fetchTelegramStatus(), fetchTelegramAlerts()]);
       setLoading(false);
     };
     init();
@@ -158,6 +320,7 @@ export default function Home() {
       if (activeTab === 'dashboard') fetchExecutions();
       if (activeTab === 'events') fetchEvents();
       if (activeTab === 'logs') fetchLogs();
+      if (activeTab === 'telegram') fetchTelegramAlerts();
     }, 4000);
 
     return () => clearInterval(interval);
@@ -588,6 +751,7 @@ export default function Home() {
             { id: 'events', label: `📋 Eventos HANA (${status?.hanaStats?.pending ?? 0} pendientes)` },
             { id: 'playground', label: '🧪 Simulador (OCRD, OITM+ITM1)' },
             { id: 'config', label: '⚙️ Configuración (PostgreSQL)' },
+            { id: 'telegram', label: '📱 Alertas Telegram' },
             { id: 'logs', label: '📜 Logs en Vivo' },
             { id: 'windows-service', label: '🖥️ Servicio Windows' }
           ].map(tab => (
@@ -2144,6 +2308,420 @@ export default function Home() {
                   npm run service:uninstall
                 </div>
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* TAB: ALERTAS TELEGRAM */}
+        {activeTab === 'telegram' && (
+          <div>
+            {/* Header / Bot Status Banner */}
+            <div className="glass-panel" style={{
+              padding: '24px 28px',
+              marginBottom: 24,
+              background: 'linear-gradient(135deg, rgba(30, 41, 59, 0.7) 0%, rgba(15, 23, 42, 0.9) 100%)',
+              border: '1px solid rgba(59, 130, 246, 0.25)',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              flexWrap: 'wrap',
+              gap: 20
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 18 }}>
+                <div style={{
+                  width: 56,
+                  height: 56,
+                  borderRadius: 16,
+                  background: 'linear-gradient(135deg, #0284c7 0%, #0088cc 100%)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: '1.8rem',
+                  boxShadow: '0 0 25px rgba(0, 136, 204, 0.4)'
+                }}>
+                  📱
+                </div>
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
+                    <h2 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#fff' }}>
+                      Alertas de Fallback vía Telegram
+                    </h2>
+                    <span className={`badge ${telegramStatus?.botInfo?.success ? 'badge-success' : 'badge-danger'}`} style={{ fontSize: '0.72rem' }}>
+                      {telegramStatus?.botInfo?.success ? '● Bot Conectado' : '● Bot Desconectado'}
+                    </span>
+                    {telegramForm.alert_fallback && (
+                      <span className="badge badge-purple" style={{ fontSize: '0.72rem' }}>
+                        ⚡ Smart Fallback Activo
+                      </span>
+                    )}
+                  </div>
+                  <p style={{ fontSize: '0.84rem', color: 'var(--text-muted)' }}>
+                    Bot: <strong style={{ color: '#38bdf8' }}>@{telegramStatus?.botInfo?.bot?.username || 'GrupoGlobalZabbixBot'}</strong> &bull;
+                    Destinatario Móvil: <strong style={{ color: '#34d399' }}>{telegramForm.phone || '+595982304930'}</strong> &bull;
+                    Chats Vinculados: <strong>{telegramStatus?.chatIds?.length || 0}</strong>
+                  </p>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                <button
+                  onClick={handleDetectTelegramChats}
+                  disabled={telegramLoading}
+                  className="btn btn-primary"
+                  style={{ display: 'flex', alignItems: 'center', gap: 8 }}
+                  title="Detectar mensajes recientes de /start o usuarios en el bot"
+                >
+                  {telegramLoading ? '⏳ Consultando...' : '🔄 Detectar mi Chat ID'}
+                </button>
+                <button
+                  onClick={() => handleSendTelegramTest()}
+                  disabled={telegramLoading || (telegramStatus?.chatIds?.length || 0) === 0}
+                  className="btn btn-secondary"
+                  style={{ display: 'flex', alignItems: 'center', gap: 8 }}
+                  title="Enviar alerta de prueba a los números/chats registrados"
+                >
+                  🧪 Enviar Prueba
+                </button>
+              </div>
+            </div>
+
+            {/* Two Column Grid */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(420px, 1fr))', gap: 24, marginBottom: 28 }}>
+              
+              {/* CARD 1: Vinculación con el Móvil */}
+              <div className="glass-panel" style={{ padding: 24 }}>
+                <h3 style={{ fontSize: '1rem', fontWeight: 700, marginBottom: 14, display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span>📲</span> Vinculación con Móvil ({telegramForm.phone || '+595982304930'})
+                </h3>
+
+                {/* Paso a paso interactivo */}
+                <div style={{
+                  background: 'rgba(15, 23, 42, 0.7)',
+                  borderRadius: 12,
+                  padding: 16,
+                  border: '1px solid rgba(255, 255, 255, 0.06)',
+                  marginBottom: 20
+                }}>
+                  <div style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-main)', marginBottom: 8 }}>
+                    Pasos para recibir las alertas en tu teléfono:
+                  </div>
+                  <ol style={{ fontSize: '0.82rem', color: 'var(--text-muted)', paddingLeft: 20, lineHeight: 1.8 }}>
+                    <li>
+                      Abre Telegram en tu teléfono móvil (<strong>{telegramForm.phone || '+595982304930'}</strong>).
+                    </li>
+                    <li>
+                      Busca el bot <strong style={{ color: '#38bdf8' }}>@{telegramStatus?.botInfo?.bot?.username || 'GrupoGlobalZabbixBot'}</strong> o haz clic aquí:{' '}
+                      <a
+                        href={`https://t.me/${telegramStatus?.botInfo?.bot?.username || 'GrupoGlobalZabbixBot'}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        style={{ color: '#38bdf8', textDecoration: 'underline', fontWeight: 600 }}
+                      >
+                        Abrir @{telegramStatus?.botInfo?.bot?.username || 'GrupoGlobalZabbixBot'} en Telegram ↗
+                      </a>
+                    </li>
+                    <li>
+                      Presiona el botón <strong>Iniciar (Start)</strong> o envía cualquier mensaje (ejemplo: <code>/start</code> o <code>Hola</code>).
+                    </li>
+                    <li>
+                      Haz clic en el botón de abajo <strong>"🔍 Detectar y Vincular mi Chat ID"</strong> para autorizar las alertas.
+                    </li>
+                  </ol>
+                </div>
+
+                {/* Botón Detectar Chat */}
+                <div style={{ marginBottom: 20 }}>
+                  <button
+                    onClick={handleDetectTelegramChats}
+                    disabled={telegramLoading}
+                    className="btn btn-primary"
+                    style={{ width: '100%', padding: '12px 18px', fontWeight: 700 }}
+                  >
+                    {telegramLoading ? '⏳ Buscando actualizaciones...' : '🔍 Detectar y Vincular mi Chat ID'}
+                  </button>
+                </div>
+
+                {/* Lista de Chat IDs Vinculados */}
+                <div>
+                  <div style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: 10, color: 'var(--text-main)' }}>
+                    Destinatarios Activos (Chat IDs):
+                  </div>
+
+                  {(!telegramStatus?.chatIds || telegramStatus.chatIds.length === 0) ? (
+                    <div style={{
+                      padding: 16,
+                      borderRadius: 10,
+                      background: 'rgba(245, 158, 11, 0.08)',
+                      border: '1px solid rgba(245, 158, 11, 0.2)',
+                      fontSize: '0.82rem',
+                      color: '#fbbf24',
+                      lineHeight: 1.6
+                    }}>
+                      ⚠️ <strong>Aún no hay ningún Chat ID vinculado.</strong><br />
+                      Sigue los pasos de arriba y presiona <em>Detectar</em>, o ingresa tu ID manualmente abajo si ya lo conoces.
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      {telegramStatus.chatIds.map(cid => (
+                        <div key={cid} style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          padding: '10px 14px',
+                          borderRadius: 8,
+                          background: 'rgba(15, 23, 42, 0.6)',
+                          border: '1px solid rgba(255, 255, 255, 0.08)'
+                        }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                            <span style={{ fontSize: '1.1rem' }}>💬</span>
+                            <div>
+                              <div style={{ fontSize: '0.85rem', fontWeight: 700, color: '#f1f5f9' }}>
+                                Chat ID: <code>{cid}</code>
+                              </div>
+                              <div style={{ fontSize: '0.74rem', color: 'var(--text-dim)' }}>
+                                Asociado a {telegramForm.phone || '+595982304930'}
+                              </div>
+                            </div>
+                          </div>
+                          <div style={{ display: 'flex', gap: 6 }}>
+                            <button
+                              onClick={() => handleSendTelegramTest(cid)}
+                              className="btn btn-secondary btn-sm"
+                              title="Probar este chat"
+                            >
+                              Test
+                            </button>
+                            <button
+                              onClick={() => handleRemoveChat(cid)}
+                              className="btn btn-danger btn-sm"
+                              title="Eliminar destinatario"
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Registro Manual de Chat ID */}
+                  <div style={{ marginTop: 16, display: 'flex', gap: 8 }}>
+                    <input
+                      type="text"
+                      className="form-control"
+                      placeholder="Ej: 123456789 (o ID de grupo)"
+                      value={telegramManualChatId}
+                      onChange={(e) => setTelegramManualChatId(e.target.value)}
+                      style={{ flex: 1, fontSize: '0.85rem' }}
+                    />
+                    <button
+                      onClick={handleAddManualChat}
+                      disabled={telegramLoading || !telegramManualChatId.trim()}
+                      className="btn btn-secondary"
+                      style={{ whiteSpace: 'nowrap' }}
+                    >
+                      + Agregar ID
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* CARD 2: Parámetros del Bot & Disparadores */}
+              <div className="glass-panel" style={{ padding: 24 }}>
+                <h3 style={{ fontSize: '1rem', fontWeight: 700, marginBottom: 14, display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span>⚙️</span> Parámetros del Bot & Disparadores
+                </h3>
+
+                <form onSubmit={handleSaveTelegramConfig}>
+                  <div style={{ marginBottom: 14 }}>
+                    <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: 6 }}>
+                      Teléfono Móvil Destino
+                    </label>
+                    <input
+                      type="text"
+                      className="form-control"
+                      value={telegramForm.phone}
+                      onChange={(e) => setTelegramForm(prev => ({ ...prev, phone: e.target.value }))}
+                      placeholder="+595982304930"
+                      required
+                    />
+                    <span style={{ fontSize: '0.72rem', color: 'var(--text-dim)' }}>
+                      Número de contacto principal para identificar las alertas
+                    </span>
+                  </div>
+
+                  <div style={{ marginBottom: 16 }}>
+                    <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: 6 }}>
+                      Token del Bot de Telegram
+                    </label>
+                    <input
+                      type="text"
+                      className="form-control"
+                      value={telegramForm.bot_token}
+                      onChange={(e) => setTelegramForm(prev => ({ ...prev, bot_token: e.target.value }))}
+                      placeholder="8968844963:AAFGhL..."
+                      required
+                    />
+                    <span style={{ fontSize: '0.72rem', color: 'var(--text-dim)' }}>
+                      Proporcionado por @BotFather para @{telegramStatus?.botInfo?.bot?.username || 'GrupoGlobalZabbixBot'}
+                    </span>
+                  </div>
+
+                  {/* Disparadores de Alerta */}
+                  <div style={{
+                    background: 'rgba(15, 23, 42, 0.6)',
+                    borderRadius: 10,
+                    padding: 14,
+                    marginBottom: 20,
+                    border: '1px solid rgba(255,255,255,0.06)'
+                  }}>
+                    <div style={{ fontSize: '0.85rem', fontWeight: 600, marginBottom: 10, color: 'var(--text-main)' }}>
+                      Reglas de Notificación Inmediata:
+                    </div>
+
+                    <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer', marginBottom: 10 }}>
+                      <input
+                        type="checkbox"
+                        checked={telegramForm.alert_fallback}
+                        onChange={(e) => setTelegramForm(prev => ({ ...prev, alert_fallback: e.target.checked }))}
+                        style={{ marginTop: 3 }}
+                      />
+                      <div>
+                        <strong style={{ fontSize: '0.85rem', color: '#f8fafc' }}>
+                          ⚡ Alertar Eventos con Fallback (Requerido)
+                        </strong>
+                        <p style={{ fontSize: '0.76rem', color: 'var(--text-muted)' }}>
+                          Dispara un mensaje al teléfono cada vez que un registro se resuelva por Fallback (ej. POST 409 ➔ PUT en OITM/OCRD o PUT 404 ➔ POST).
+                        </p>
+                      </div>
+                    </label>
+
+                    <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer', marginBottom: 10 }}>
+                      <input
+                        type="checkbox"
+                        checked={telegramForm.alert_error}
+                        onChange={(e) => setTelegramForm(prev => ({ ...prev, alert_error: e.target.checked }))}
+                        style={{ marginTop: 3 }}
+                      />
+                      <div>
+                        <strong style={{ fontSize: '0.85rem', color: '#f8fafc' }}>
+                          🚨 Alertar Errores Críticos
+                        </strong>
+                        <p style={{ fontSize: '0.76rem', color: 'var(--text-muted)' }}>
+                          Envía notificación en caso de fallos de conexión o respuestas HTTP 500 no recuperables.
+                        </p>
+                      </div>
+                    </label>
+
+                    <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer' }}>
+                      <input
+                        type="checkbox"
+                        checked={telegramForm.is_active}
+                        onChange={(e) => setTelegramForm(prev => ({ ...prev, is_active: e.target.checked }))}
+                        style={{ marginTop: 3 }}
+                      />
+                      <div>
+                        <strong style={{ fontSize: '0.85rem', color: '#f8fafc' }}>
+                          🔔 Sistema de Notificaciones Habilitado
+                        </strong>
+                        <p style={{ fontSize: '0.76rem', color: 'var(--text-muted)' }}>
+                          Interruptor maestro para activar o pausar todas las alertas de Telegram.
+                        </p>
+                      </div>
+                    </label>
+                  </div>
+
+                  <div style={{ display: 'flex', gap: 10 }}>
+                    <button
+                      type="submit"
+                      disabled={telegramLoading}
+                      className="btn btn-success"
+                      style={{ flex: 1 }}
+                    >
+                      {telegramLoading ? 'Guardando...' : '💾 Guardar Configuración'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleSendTelegramTest()}
+                      disabled={telegramLoading || (telegramStatus?.chatIds?.length || 0) === 0}
+                      className="btn btn-secondary"
+                    >
+                      🧪 Probar Alerta
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+
+            {/* CARD 3: Historial de Alertas Telegram */}
+            <div className="glass-panel" style={{ padding: 24 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                <div>
+                  <h3 style={{ fontSize: '1rem', fontWeight: 700 }}>
+                    📜 Historial de Alertas Emitidas (ALERT_LOG)
+                  </h3>
+                  <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                    Registro histórico de todas las alertas procesadas y enviadas a Telegram
+                  </p>
+                </div>
+                <button
+                  onClick={fetchTelegramAlerts}
+                  className="btn btn-secondary btn-sm"
+                >
+                  🔄 Refrescar
+                </button>
+              </div>
+
+              {telegramAlerts.length === 0 ? (
+                <div style={{ padding: 32, textAlign: 'center', color: 'var(--text-dim)', fontSize: '0.88rem' }}>
+                  No hay alertas registradas aún. Cuando se ejecute un evento con Fallback, aparecerá aquí.
+                </div>
+              ) : (
+                <div style={{ overflowX: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
+                    <thead>
+                      <tr style={{ borderBottom: '1px solid var(--border-subtle)', textAlign: 'left', color: 'var(--text-muted)' }}>
+                        <th style={{ padding: '10px 12px' }}>ID</th>
+                        <th style={{ padding: '10px 12px' }}>Tipo</th>
+                        <th style={{ padding: '10px 12px' }}>Evento SAP</th>
+                        <th style={{ padding: '10px 12px' }}>Objeto / Clave</th>
+                        <th style={{ padding: '10px 12px' }}>Estado</th>
+                        <th style={{ padding: '10px 12px' }}>Destinatarios</th>
+                        <th style={{ padding: '10px 12px' }}>Fecha / Hora</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {telegramAlerts.map(alt => (
+                        <tr key={alt.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                          <td style={{ padding: '10px 12px', color: 'var(--text-dim)' }}>#{alt.id}</td>
+                          <td style={{ padding: '10px 12px' }}>
+                            <span className={`badge ${alt.alert_type === 'FALLBACK' ? 'badge-warning' : alt.alert_type === 'TEST' ? 'badge-info' : 'badge-danger'}`}>
+                              {alt.alert_type}
+                            </span>
+                          </td>
+                          <td style={{ padding: '10px 12px' }}>
+                            {alt.event_id ? `Evento #${alt.event_id}` : 'Manual'}
+                          </td>
+                          <td style={{ padding: '10px 12px' }}>
+                            <strong>{alt.object_type || '-'}</strong> {alt.entry_key ? `(${alt.entry_key})` : ''}
+                          </td>
+                          <td style={{ padding: '10px 12px' }}>
+                            <span className={`badge ${alt.status === 'SENT' ? 'badge-success' : alt.status === 'PENDING_CHAT_ID' ? 'badge-warning' : 'badge-danger'}`}>
+                              {alt.status === 'SENT' ? '✓ Enviada' : alt.status === 'PENDING_CHAT_ID' ? 'Pendiente Chat' : 'Error'}
+                            </span>
+                          </td>
+                          <td style={{ padding: '10px 12px', color: 'var(--text-muted)', fontFamily: 'monospace' }}>
+                            {alt.recipients || '-'}
+                          </td>
+                          <td style={{ padding: '10px 12px', color: 'var(--text-dim)' }}>
+                            {alt.created_at ? new Date(alt.created_at).toLocaleString() : '-'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           </div>
         )}
