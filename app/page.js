@@ -1225,8 +1225,8 @@ export default function Home() {
                     className="form-input"
                     value={simObjectType}
                     onChange={e => setSimObjectType(e.target.value)}
-                    placeholder="2 (OCRD) o 4 (OITM)"
-                    title="2 = Socios (OCRD), 4 = Artículos (OITM + ITM1)"
+                    placeholder="2 (OCRD), 4 (OITM) o 177 (OAGP)"
+                    title="2 = Socios (OCRD), 4 = Artículos (OITM + ITM1), 177 = Agentes (OAGP)"
                     required
                   />
                 </div>
@@ -1237,7 +1237,7 @@ export default function Home() {
                     className="form-input"
                     value={simCardCode}
                     onChange={e => setSimCardCode(e.target.value)}
-                    placeholder="Ej: CC0102868 o PV42"
+                    placeholder="Ej: CC0102868, PV42 o Wilson Ortega"
                     required
                   />
                 </div>
